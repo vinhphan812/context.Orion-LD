@@ -678,6 +678,14 @@ static KjNode* notificationTree(OrionldAlterationMatch* matchList)
 //
 int notificationSend(OrionldAlterationMatch* mAltP, double timestamp, CURL** curlHandlePP)
 {
+  // E7-D4: I4 boundary — notification payload being built
+  int entityCount = 0;
+  const char* subId = mAltP->subP->subscriptionId;
+  const char* entityId = mAltP->altP->entityId;
+  for (OrionldAlterationMatch* mP = mAltP; mP != NULL; mP = mP->next) { ++entityCount; }
+  KT_T(KtE7D4I4, "E7-D4 I4: sub='%s' entity='%s' notifications=%d protocol=%d",
+       subId, entityId, entityCount, mAltP->subP->protocol);
+
   bool ngsiv2 = (mAltP->subP->renderFormat >= RF_CROSS_APIS_NORMALIZED);
 
   // <DEBUG>

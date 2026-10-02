@@ -361,11 +361,15 @@ static void notificationResponseTreat(NotificationPending* npP, double notificat
 
   bzero(buf, sizeof(buf));
 
+  // E7-D4: I6 boundary — HTTP response received, evaluating status
   if (notificationResponseRead(npP, buf, sizeof(buf), &httpStatusCode, &contentLength, &headers, &body, notificationTime) == false)
   {
-    // if notificationResponseRead() returns false, it has invoked notificationFailure()
+    // notificationResponseRead() already invoked notificationFailure() internally
+    KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' status=READ_ERROR", subId);
     return;
   }
+
+  KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' status=%d contentLength=%d", subId, httpStatusCode, contentLength);
 
   if (ktTraceLevelCheck(KtNotificationHeaders) == true)
   {
@@ -393,11 +397,15 @@ static void notificationResponseTreat(NotificationPending* npP, double notificat
   }
   else if ((httpStatusCode < 200) || (httpStatusCode >= 300))
   {
+    KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' OUTCOME=FAIL status=%d", subId, httpStatusCode);
     notificationFailure(npP->subP, "non 2xx response to notification", notificationTime);
     KT_E("Internal Error (%s: non 2xx response (%d) to notification on fd %d)", subId, httpStatusCode, npP->fd);
   }
   else
+  {
+    KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' OUTCOME=OK status=%d", subId, httpStatusCode);
     notificationSuccess(npP->subP, notificationTime);
+  }
 }
 
 
@@ -502,6 +510,32 @@ void orionldAlterationsTreat(OrionldAlteration* altList)
   if (matchList == NULL)
     return;
 
+  // E7-D4: I3 boundary — subscription predicate evaluation complete
+  {
+    int entityCount = 0;
+    int subCount = 0;
+    const char* lastEntityId = NULL;
+    const char* lastSubId = NULL;
+    for (OrionldAlterationMatch* mP = matchList; mP != NULL; mP = mP->next) {
+      ++entityCount;
+      lastEntityId = mP->altP->entityId;
+      lastSubId = mP->subP->subscriptionId;
+    }
+    {
+      char seen[256][64];
+      int seenCount = 0;
+      for (OrionldAlterationMatch* mP = matchList; mP != NULL; mP = mP->next) {
+        bool found = false;
+        for (int i = 0; i < seenCount; ++i)
+          if (strcmp(seen[i], mP->subP->subscriptionId) == 0) { found = true; break; }
+        if (!found && seenCount < 256) { strncpy(seen[seenCount++], mP->subP->subscriptionId, 63); }
+      }
+      subCount = seenCount;
+    }
+    KT_T(KtE7D4I3, "E7-D4 I3: entityId='%s' matches=%d subs=%d firstSub='%s'",
+         lastEntityId ? lastEntityId : "null", matches, subCount, lastSubId ? lastSubId : "null");
+  }
+
 
   //
   // The matches are ordered, grouped by subscriptionId
@@ -587,6 +621,11 @@ void orionldAlterationsTreat(OrionldAlteration* altList)
     }
 
     CURL* curlHandleP = NULL;
+    // E7-D4: I5 boundary — notification dispatched
+    KT_T(KtE7D4I5, "E7-D4 I5: sub='%s' entity='%s' protocol=%d",
+         matchHead->subP->subscriptionId,
+         matchHead->altP->entityId,
+         matchHead->subP->protocol);
     int   fd          = notificationSend(matchHead, notificationTime, &curlHandleP);  // curl handle as output param?
 
     //
@@ -596,6 +635,7 @@ void orionldAlterationsTreat(OrionldAlteration* altList)
     //
     if ((fd != -1) && (matchHead->subP->protocol != MQTT) && (matchHead->subP->protocol != WS))
     {
+      KT_T(KtE7D4I5, "E7-D4 I5: sub='%s' fd=%d PENDING_RESPONSE", matchHead->subP->subscriptionId, fd);
       NotificationPending* npP = (NotificationPending*) kaAlloc(&orionldState.kalloc, sizeof(NotificationPending));
 
       npP->subP        = matchHead->subP;
@@ -705,6 +745,7 @@ void orionldAlterationsTreat(OrionldAlteration* altList)
       // No response
       if (strncmp(npP->subP->protocolString, "mqtt", 4) != 0)
       {
+        KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' OUTCOME=TIMEOUT", npP->subP->subscriptionId);
         notificationFailure(npP->subP, "Timeout awaiting response from notification endpoint", notificationTime);
 
         KT_T(KtNotificationSend, "Closing fd %d after timeout", npP->fd);
@@ -788,11 +829,14 @@ void orionldAlterationsTreat(OrionldAlteration* altList)
         KT_T(KtNotificationSend, "%s: Notification Response HTTP Status: %d", npP->subP->subscriptionId, (int) httpResponseCode);
 
         if ((httpResponseCode >= 200) && (httpResponseCode < 300))
+        {
+          KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' OUTCOME=OK protocol=HTTPS status=%d", npP->subP->subscriptionId, (int)httpResponseCode);
           notificationSuccess(npP->subP, notificationTime);
+        }
         else
         {
           char errorString[256];
-
+          KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' OUTCOME=FAIL protocol=HTTPS status=%d", npP->subP->subscriptionId, (int)httpResponseCode);
           snprintf(errorString, sizeof(errorString), "Got an HTTP Status %d", (int) httpResponseCode);
           notificationFailure(npP->subP, errorString, notificationTime);
         }
@@ -800,7 +844,7 @@ void orionldAlterationsTreat(OrionldAlteration* altList)
       else
       {
         char errorString[512];
-
+        KT_T(KtE7D4I6, "E7-D4 I6: sub='%s' OUTCOME=FAIL protocol=HTTPS curl_error=%d", npP->subP->subscriptionId, msgP->data.result);
         snprintf(errorString, sizeof(errorString), "CURL Error %d: %s", msgP->data.result, curl_easy_strerror(msgP->data.result));
         notificationFailure(npP->subP, errorString, notificationTime);
       }

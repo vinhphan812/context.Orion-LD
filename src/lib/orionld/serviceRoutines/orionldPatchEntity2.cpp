@@ -708,6 +708,19 @@ bool orionldPatchEntity2(void)
     orionldAlterationsPresent(orionldState.alterations);
     orionldState.alterations->dbEntityP = kjClone(orionldState.kjsonP, dbEntityP);
 
+    // E7-D4: I1 boundary — MongoDB entity write acknowledged, alterations extracted
+    {
+      int altCount = 0;
+      for (OrionldAlteration* aP = orionldState.alterations; aP != NULL; aP = aP->next)
+        ++altCount;
+      KT_T(KtE7D4I1, "E7-D4 I1: entityId='%s' alterations=%d", entityId, altCount);
+      for (OrionldAlteration* aP = orionldState.alterations; aP != NULL; aP = aP->next)
+        KT_T(KtE7D4I2, "E7-D4 I2: entityId='%s' attr='%s' type=%s",
+             aP->entityId,
+             aP->alteredAttributeV[0].attrName,
+             orionldAlterationType(aP->alteredAttributeV[0].alterationType));
+    }
+
     //
     // For TRoE we need a tree with all those attributes that have been patched (part of incoming tree)
     // but, with their current value in the database PATCHED with their new values

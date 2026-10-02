@@ -55,6 +55,9 @@ int httpNotify
   double               notificationTime
 )
 {
+  // E7-D4: I5 boundary — notification dispatched to transport (socket connect initiated)
+  KT_T(KtE7D4I5, "E7-D4 I5: sub='%s' ip='%s' port=%d", subscriptionId, ip, port);
+
   // Connect
   KT_T(KtNotificationSend, "%s: Connecting to notification '%s:%d' receptor for HTTP notification", subscriptionId, ip, port);
   int fd = orionldServerConnect(ip, port);

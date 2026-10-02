@@ -136,6 +136,20 @@ typedef enum OrionldTraceLevels
   // Alterations
   KtAlt                     = 1000,
 
+  // E7-D4 Level-3 Orion Observability: I1-I6 internal boundaries
+  // I1: MongoDB entity write acknowledged (orionldPatchEntity2)
+  // I2: Alterations extracted from update result (orionldAlterations)
+  // I3: Subscription predicate evaluation (subCacheAlterationMatch)
+  // I4: Notification payload built (notificationSend)
+  // I5: Notification dispatched to transport (httpNotify/orionldServerConnect)
+  // I6: HTTP response received
+  KtE7D4I1                  = 1050,   // I1: MongoDB write acknowledged
+  KtE7D4I2                  = 1051,   // I2: Alterations extracted
+  KtE7D4I3                  = 1052,   // I3: Subscription match evaluated
+  KtE7D4I4                  = 1053,   // I4: Notification payload built
+  KtE7D4I5                  = 1054,   // I5: Notification dispatched
+  KtE7D4I6                  = 1055,   // I6: HTTP response received
+
   // Notifications
   KtNotification            = 1100,
   KtNotificationStats       = 1101,
