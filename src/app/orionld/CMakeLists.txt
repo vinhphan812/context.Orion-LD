@@ -31,9 +31,6 @@ SET (HEADERS
 
 SET (STATIC_LIBS
     ${ORION_LIBS}
-    ${COMMON_STATIC_LIBS}
-    kjson.a
-    ktrace.a
 )
 
 # Include directories
@@ -52,12 +49,31 @@ link_directories("${LIBMICROHTTPD_LIBRARY_DIRS}")
 # Executable declaration
 # ------------------------------------------------------------
 ADD_EXECUTABLE(orionld ${SOURCES} ${HEADERS})
+# Orion static archives have circular dependencies.
+# Wrap them with --start-group/--end-group so the linker resolves
+# mutual symbol references. kjson is linked as static (libkjson.a)
+# for kjLookup symbols used by Orion code (kjTree module).
+TARGET_LINK_OPTIONS(orionld PRIVATE "-Wl,--start-group")
 TARGET_LINK_LIBRARIES(orionld
   ${STATIC_LIBS}
+  khash.a
+  ktrace.a
+  kargs.a
+  kalloc.a
+  kbase.a
+  kprom.a
+  kjson.a
+)
+TARGET_LINK_OPTIONS(orionld PRIVATE "-Wl,--end-group")
+
+# Dynamic libs: sasl2_compat must precede -lsasl2 for RHEL/UBI8
+# (the compat shim provides SASL2 versioned symbols expected by mongoc)
+TARGET_LINK_LIBRARIES(orionld
   ${DYNAMIC_LIBS}
   -lmongoclient
   -lmicrohttpd
   -lmicrohttpd_ws
+  sasl2_compat
   ${Boost_LIBRARIES}
 )
 

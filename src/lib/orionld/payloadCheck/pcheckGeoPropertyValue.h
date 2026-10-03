@@ -3,7 +3,7 @@
 
 /*
 *
-* Copyright 2019 FIWARE Foundation e.V.
+* Copyright 2022 FIWARE Foundation e.V.
 *
 * This file is part of Orion-LD Context Broker.
 *
@@ -32,10 +32,10 @@ extern "C"
 
 
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 //
-// pcheckGeoPropertyValue -
+// pCheckGeoPropertyValue -
 //
-extern bool pcheckGeoPropertyValue(KjNode* geoPropertyP, char** geoTypePP, KjNode** geoCoordsPP, const char* attrName);
+extern bool pCheckGeoPropertyValue(KjNode* attrP, const char* attrLongName);
 
 #endif  // SRC_LIB_ORIONLD_PAYLOADCHECK_PCHECKGEOPROPERTYVALUE_H_

@@ -1,6 +1,6 @@
 /*
 *
-* Copyright 2019 FIWARE Foundation e.V.
+* Copyright 2022 FIWARE Foundation e.V.
 *
 * This file is part of Orion-LD Context Broker.
 *
@@ -22,113 +22,72 @@
 *
 * Author: Ken Zangelin
 */
+#include <unistd.h>                                              // NULL
+
 extern "C"
 {
 #include "kjson/KjNode.h"                                        // KjNode
-#include "kjson/kjParse.h"                                       // kjParse
+#include "kjson/kjLookup.h"                                      // kjLookup
 }
 
-#include "orionld/common/orionldState.h"                         // orionldState
 #include "orionld/common/orionldError.h"                         // orionldError
-#include "orionld/common/SCOMPARE.h"                             // SCOMPAREx
-#include "orionld/common/CHECK.h"                                // CHECKx()
-#include "orionld/payloadCheck/PCHECK.h"                         // PCHECK_*
 #include "orionld/types/OrionldGeometry.h"                       // OrionldGeometry
-#include "orionld/payloadCheck/pCheckGeometry.h"                 // pCheckGeometry
+#include "orionld/payloadCheck/PCHECK.h"                         // PCHECK_DUPLICATE
+#include "orionld/payloadCheck/pCheckGeoPropertyType.h"          // pCheckGeoPropertyType
 #include "orionld/payloadCheck/pCheckGeoCoordinates.h"           // pCheckGeoCoordinates
-#include "orionld/payloadCheck/pcheckGeoPropertyValue.h"         // Own interface
+#include "orionld/payloadCheck/pCheckGeoPropertyValue.h"         // Own interface
 
 
 
-// ----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 //
-// pcheckGeoPropertyValue -
+// pCheckGeoPropertyValue -
 //
-bool pcheckGeoPropertyValue(KjNode* geoPropertyP, char** geometryPP, KjNode** geoCoordsPP, const char* attrName)
+bool pCheckGeoPropertyValue(KjNode* valueP, const char* attrLongName)
 {
-  KjNode*             typeNodeP         = NULL;
-  KjNode*             coordinatesNodeP  = NULL;
-  OrionldGeometry     geometry          = GeoNoGeometry;
-  char*               geometryString    = (char*) "NoGeometry";
+  KjNode* typeP        = NULL;
+  KjNode* coordinatesP = NULL;
 
-  if (geoPropertyP->type != KjObject)
+  if (valueP->type != KjObject)
   {
-    orionldError(OrionldBadRequestData, "the value of a geo-location attribute must be a JSON Object", kjValueType(geoPropertyP->type), 400);
+    orionldError(OrionldBadRequestData, "The value of a GeoProperty must be a JSON Object", attrLongName, 400);
     return false;
   }
 
-  for (KjNode* nodeP = geoPropertyP->value.firstChildP; nodeP != NULL; nodeP = nodeP->next)
+  for (KjNode* itemP = valueP->value.firstChildP; itemP != NULL; itemP = itemP->next)
   {
-    if (SCOMPARE5(nodeP->name, 't', 'y', 'p', 'e', 0))
-    {
-      DUPLICATE_CHECK(typeNodeP, "geo-location::type", nodeP);
-      STRING_CHECK(nodeP, "the 'type' field of a GeoJSON object must be a JSON String");
-      EMPTY_STRING_CHECK(nodeP, "the 'type' field of a GeoJSON object cannot be an empty string");
-
-      if (pCheckGeometry(typeNodeP->value.s, &geometry, false) == false)
-      {
-        // orionldError(OrionldBadRequestData, detail, typeNodeP->value.s, 400);
-        return false;
-      }
-      geometryString = typeNodeP->value.s;
-    }
-    else if (SCOMPARE12(nodeP->name, 'c', 'o', 'o', 'r', 'd', 'i', 'n', 'a', 't', 'e', 's', 0))
-    {
-      DUPLICATE_CHECK(coordinatesNodeP, "geo-location::coordinates", nodeP);
-      PCHECK_STRING_OR_ARRAY(coordinatesNodeP, 0, "Invalid Data Type", "the 'coordinates' field of a GeoJSON object must be a JSON Array (or String)", 400);
-    }
+    if (strcmp(itemP->name, "type") == 0)
+      PCHECK_DUPLICATE(typeP, itemP, 0, NULL, "type field in value of GeoProperty", 400);
+    else if (strcmp(itemP->name, "coordinates") == 0)
+      PCHECK_DUPLICATE(coordinatesP, itemP, 0, NULL, "coordinates field in value of GeoProperty", 400);
     else
     {
-      orionldError(OrionldBadRequestData, "unexpected item in geo-location", attrName, 400);
+      orionldError(OrionldBadRequestData, "Unexpected Field in value of GeoProperty", itemP->name, 400);
       return false;
     }
   }
 
-  if ((typeNodeP == NULL) && (coordinatesNodeP == NULL))
+  if (typeP == NULL)
   {
-    orionldError(OrionldBadRequestData,
-                 "The value of an attribute of type GeoProperty must be valid GeoJson",
-                 "Mandatory 'coordinates' and 'type' fields missing for a GeoJSON Property",
-                 400);
+    orionldError(OrionldBadRequestData, "Mandatory Field /type/ missing for a GeoProperty value", attrLongName, 400);
     return false;
   }
 
-  if (typeNodeP == NULL)
+  if (coordinatesP == NULL)
   {
-    orionldError(OrionldBadRequestData, "Mandatory 'type' field missing for GeoJSON Property", attrName, 400);
+    orionldError(OrionldBadRequestData, "Mandatory Field /coordinates/ missing for a GeoProperty value", attrLongName, 400);
     return false;
   }
 
-  if (coordinatesNodeP == NULL)
-  {
-    orionldError(OrionldBadRequestData,
-                 "The value of an attribute of type GeoProperty must be valid GeoJson - 'coordinates' field missing",
-                 attrName,
-                 400);
-    return false;
-  }
-
-  // Check that the coordinates (coordinatesNodeP) JSON Array coincides with the type 'geometry'
-  if (coordinatesNodeP->type == KjString)
-  {
-    coordinatesNodeP = kjParse(orionldState.kjsonP, coordinatesNodeP->value.s);
-    if (coordinatesNodeP == NULL)
-    {
-      orionldError(OrionldBadRequestData, "Invalid GeoJSON", "'coordinates' as string is not a valid JSON Array", 400);
-      return false;
-    }
-  }
-
-  if (pCheckGeoCoordinates(coordinatesNodeP, geometry) == false)
+  // Is the type a valid GeoJSON type? (Point, Polygon, ...)
+  OrionldGeometry geometry;
+  // FIXME: Rename to pCheckGeoPropertyValueType?
+  if (pCheckGeoPropertyType(typeP, &geometry, attrLongName) == false)  // pCheckGeoPropertyType sets ProblemDetails
     return false;
 
-  //
-  // Keep coordsP and typeP for later use (in mongoBackend)
-  //
-  if (geometryPP != NULL)
-    *geometryPP   = geometryString;
-  if (geoCoordsPP != NULL)
-    *geoCoordsPP = coordinatesNodeP;
+  // FIXME: Rename to pCheckGeoPropertyValueCoordinates?
+  if (pCheckGeoCoordinates(coordinatesP, geometry) == false)  // pCheckGeoCoordinates sets ProblemDetails
+    return false;
 
   return true;
 }

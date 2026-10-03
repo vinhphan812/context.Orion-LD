@@ -3,7 +3,7 @@
 
 /*
 *
-* Copyright 2019 FIWARE Foundation e.V.
+* Copyright 2022 FIWARE Foundation e.V.
 *
 * This file is part of Orion-LD Context Broker.
 *
@@ -27,26 +27,39 @@
 */
 extern "C"
 {
-#include "kjson/KjNode.h"                                      // KjNode
+#include "kjson/KjNode.h"                                     // KjNode
 }
+
+#include "orionld/types/QNode.h"                              // QNode
+#include "orionld/types/OrionldRenderFormat.h"                // OrionldRenderFormat
 
 
 
 // -----------------------------------------------------------------------------
 //
-// pcheckSubscription -
+// pCheckSubscription -
 //
-extern bool pcheckSubscription
+extern bool pCheckSubscription
 (
-  KjNode*          subNodeP,
-  bool             idCanBePresent,
-  KjNode**         watchedAttributesPP,
-  KjNode**         timeIntervalPP,
-  KjNode**         qPP,
-  KjNode**         geoqPP,
-  KjNode**         geoCoordinatesP,
-  bool             patch,
-  bool*            mqttChangeP
+  KjNode*               subP,
+  bool                  isCreate,          // true if POST, false if PATCH
+  char*                 subscriptionId,    // non-NULL if PATCH
+  KjNode*               idP,
+  KjNode*               typeP,
+  KjNode**              endpointP,
+  KjNode**              qNodeP,
+  QNode**               qTreeP,
+  char**                qTextP,
+  bool*                 qValidForV2P,
+  bool*                 qIsMqP,
+  KjNode**              uriPP,
+  KjNode**              notifierInfoPP,
+  KjNode**              geoCoordinatesPP,
+  bool*                 mqttChangeP,
+  KjNode**              showChangesP,
+  KjNode**              sysAttrsP,
+  double*               timeInterval,
+  OrionldRenderFormat*  renderFormatP
 );
 
 #endif  // SRC_LIB_ORIONLD_PAYLOADCHECK_PCHECKSUBSCRIPTION_H_

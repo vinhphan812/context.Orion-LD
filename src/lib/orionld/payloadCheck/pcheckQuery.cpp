@@ -1,6 +1,6 @@
 /*
 *
-* Copyright 2019 FIWARE Foundation e.V.
+* Copyright 2022 FIWARE Foundation e.V.
 *
 * This file is part of Orion-LD Context Broker.
 *
@@ -24,76 +24,114 @@
 */
 extern "C"
 {
+#include "kalloc/kaAlloc.h"                                      // kaAlloc
 #include "kjson/KjNode.h"                                        // KjNode
-#include "kjson/kjBuilder.h"                                     // kjString, kjObject, ...
+#include "kjson/kjBuilder.h"                                     // kjChildRemove
 }
 
-#include "orionld/types/QNode.h"                                 // QNode
 #include "orionld/common/orionldState.h"                         // orionldState
 #include "orionld/common/orionldError.h"                         // orionldError
-#include "orionld/common/SCOMPARE.h"                             // SCOMPAREx
-#include "orionld/common/CHECK.h"                                // CHECK
-#include "orionld/context/orionldCoreContext.h"                  // orionldDefaultUrl, orionldCoreContext
-#include "orionld/q/qLex.h"                                      // qLex
-#include "orionld/q/qParse.h"                                    // qParse
-#include "orionld/payloadCheck/fieldPaths.h"                     // PostQueryEntitiesPath, ...
-#include "orionld/payloadCheck/pcheckEntityInfoArray.h"          // pcheckEntityInfoArray
-#include "orionld/payloadCheck/pcheckAttrs.h"                    // pcheckAttrs
+#include "orionld/types/TreeNode.h"                              // TreeNode
+#include "orionld/context/orionldContextItemExpand.h"            // orionldContextItemExpand
+#include "orionld/context/orionldAttributeExpand.h"              // orionldAttributeExpand
 #include "orionld/payloadCheck/pcheckQ.h"                        // pcheckQ
 #include "orionld/payloadCheck/pcheckGeoQ.h"                     // pcheckGeoQ
-#include "orionld/payloadCheck/pcheckQuery.h"                    // Own interface
+#include "orionld/payloadCheck/pCheckUri.h"                      // pCheckUri
+#include "orionld/payloadCheck/pCheckQuery.h"                    // Own interface
 
 
 
 // -----------------------------------------------------------------------------
 //
-// pcheckQueryEntities -
+// treeNodeLookup -
 //
-static bool pcheckQueryEntities(KjNode* entitiesP)
+static TreeNode* treeNodeLookup(TreeNode* treeNodeV, int treeNodes, const char* name)
 {
-  ARRAY_CHECK(entitiesP, PostQueryEntitiesPath);
-  EMPTY_ARRAY_CHECK(entitiesP, PostQueryEntitiesPath);
-
-  for (KjNode* entitySelectorP = entitiesP->value.firstChildP; entitySelectorP != NULL; entitySelectorP = entitySelectorP->next)
+  for (int ix = 0; ix < treeNodes; ix++)
   {
-    OBJECT_CHECK(entitySelectorP, PostQueryEntitiesItemPath);
-    EMPTY_OBJECT_CHECK(entitySelectorP, PostQueryEntitiesItemPath);
+    if (strcmp(treeNodeV[ix].name, name) == 0)
+      return &treeNodeV[ix];
+  }
 
-    KjNode* typeP       = NULL;
-    KjNode* idP         = NULL;
-    KjNode* idPatternP  = NULL;
+  return NULL;
+}
 
-    for (KjNode* selectorItemP = entitySelectorP->value.firstChildP; selectorItemP != NULL; selectorItemP = selectorItemP->next)
+
+
+// ----------------------------------------------------------------------------
+//
+// pCheckTreeNodesExtract -
+//
+static bool pCheckTreeNodesExtract(KjNode* treeP, TreeNode* treeNodeV, int treeNodes, bool errorOnUnknown, const char* detailPrefix)
+{
+  for (KjNode* nodeP = treeP->value.firstChildP; nodeP != NULL; nodeP = nodeP->next)
+  {
+    TreeNode* treeNodeP       = treeNodeLookup(treeNodeV, treeNodes, nodeP->name);
+    char*     errorTitle      = NULL;  // If set, there's an error
+    bool      errorAlreadySet = false;
+
+
+    //
+    // Validity check
+    //   - Unknown field  (AND errorOnUnknown == true)
+    //   - Duplicated field
+    //   - Invalid JSON type  (it's a bitmask)
+    //   - Empty Array or Object
+    //   - Empty String
+    //
+    int                      statusCode = 400;
+    OrionldResponseErrorType errorType  = OrionldBadRequestData;
+
+    if (treeNodeP == NULL)
     {
-      if (strcmp(selectorItemP->name, "id") == 0)
-      {
-        DUPLICATE_CHECK(idP, PostQueryEntitiesIdPath, selectorItemP);
-        STRING_CHECK(idP, PostQueryEntitiesIdPath);
-        URI_CHECK(idP->value.s, PostQueryEntitiesIdPath, true);
-      }
-      else if (strcmp(selectorItemP->name, "type") == 0)
-      {
-        DUPLICATE_CHECK(typeP, PostQueryEntitiesTypePath, selectorItemP);
-        STRING_CHECK(typeP, PostQueryEntitiesTypePath);
-        URI_CHECK(typeP->value.s, PostQueryEntitiesTypePath, false);
-      }
-      else if (strcmp(selectorItemP->name, "idPattern") == 0)
-      {
-        DUPLICATE_CHECK(idPatternP, PostQueryEntitiesIdPatternPath, selectorItemP);
-        STRING_CHECK(idPatternP, PostQueryEntitiesIdPatternPath);
-      }
-      else
-      {
-        orionldError(OrionldBadRequestData, "Invalid field for Query::entities[X]", selectorItemP->name, 400);
-        return false;
-      }
+      if (errorOnUnknown == true)
+        errorTitle = (char*) "Unknown field";
     }
-
-    if (typeP == NULL)
+    else if (treeNodeP->aux & NOT_IMPLEMENTED)
     {
-      orionldError(OrionldBadRequestData, "Mandatory field missing", PostQueryEntitiesTypePath, 400);
+      errorTitle = (char*) "This part of the Query is not implpemented";
+      statusCode = 501;
+      errorType  = OrionldOperationNotSupported;
+    }
+    else if (treeNodeP->aux & NOT_SUPPORTED)
+      errorTitle = (char*) "Field not supported for this type of Query";
+    else if (treeNodeP->nodeP != NULL)
+      errorTitle = (char*) "Duplicated field";
+    else if (((1 << nodeP->type) & treeNodeP->nodeType) == 0)
+      errorTitle = (char*) "Invalid JSON type";
+    else if (((nodeP->type == KjArray) || (nodeP->type == KjObject)) && (nodeP->value.firstChildP == NULL))
+      errorTitle = (nodeP->type == KjArray)? (char*) "Empty JSON Array" : (char*) "Empty JSON Object";
+    else if ((nodeP->type == KjString) && (nodeP->value.s[0] == 0))
+      errorTitle = (char*) "Empty JSON String";
+    else if ((treeNodeP->aux & IS_URI) && (pCheckUri(nodeP->value.s, treeNodeP->name, true) == false))
+      errorAlreadySet = true;
+
+    if ((errorTitle != NULL) || (errorAlreadySet == true))
+    {
+      const char* detail = ((treeNodeP != NULL) && treeNodeP->longName != NULL)? treeNodeP->longName : nodeP->name;
+
+      if (errorAlreadySet == false)
+        orionldError(errorType, errorTitle, detail, statusCode);
       return false;
     }
+
+    treeNodeP->nodeP = nodeP;
+  }
+
+  //
+  // Check for "MANDATORY but missing"
+  //
+  int ix = 0;
+  while ((ix < treeNodes) && (treeNodeV[ix].name != NULL))
+  {
+    if ((treeNodeV[ix].aux == MANDATORY) && (treeNodeV[ix].nodeP == NULL))
+    {
+      const char* detail = (treeNodeV[ix].longName != NULL)? treeNodeV[ix].longName : treeNodeV[ix].name;
+      orionldError(OrionldBadRequestData, "Mandatory field missing", detail, 400);
+      return false;
+    }
+
+    ++ix;
   }
 
   return true;
@@ -103,102 +141,164 @@ static bool pcheckQueryEntities(KjNode* entitiesP)
 
 // -----------------------------------------------------------------------------
 //
-// pcheckQuery -
+// pCheckEntities -
 //
-bool pcheckQuery(KjNode* tree, KjNode** entitiesPP, KjNode** attrsPP, QNode** qTreePP, KjNode** geoqPP, char** langPP)
+static bool pCheckEntities(KjNode* entitiesP)
 {
-  KjNode*  entitiesP   = NULL;
-  KjNode*  attrsP      = NULL;
-  KjNode*  qP          = NULL;
-  KjNode*  geoqP       = NULL;
-  KjNode*  langP       = NULL;
-  KjNode*  typeP       = NULL;  // Must be a string with the value "Query"
+  // Array check already done (pCheckQuery)
 
-  OBJECT_CHECK(tree, "payload body");
-  EMPTY_OBJECT_CHECK(tree, "payload body");
-
-  //
-  // Check for duplicated items and that data types are correct
-  //
-  for (KjNode* kNodeP = tree->value.firstChildP; kNodeP != NULL; kNodeP = kNodeP->next)
+  for (KjNode* entityP = entitiesP->value.firstChildP; entityP != NULL; entityP = entityP->next)
   {
-    if (strcmp(kNodeP->name, "type") == 0)
+    if (entityP->type != KjObject)
     {
-      DUPLICATE_CHECK(typeP, "type", kNodeP);
-      STRING_CHECK(typeP, "type");
-      EMPTY_STRING_CHECK(typeP, "type");
-      if (strcmp(typeP->value.s, "Query") != 0)
-      {
-        orionldError(OrionldBadRequestData, "Invalid value for 'type' member of a POST Query", "Must be a JSON String with the value /Query/", 400);
-        return false;
-      }
-    }
-    else if (strcmp(kNodeP->name, "entities") == 0)
-    {
-      DUPLICATE_CHECK(entitiesP, "entities", kNodeP);
-      ARRAY_CHECK(entitiesP, "entities");
-      EMPTY_ARRAY_CHECK(entitiesP, "entities");
-      if (pcheckQueryEntities(kNodeP) == false)
-        return false;
-
-      *entitiesPP = entitiesP;
-    }
-    else if (strcmp(kNodeP->name, "attrs") == 0)
-    {
-      DUPLICATE_CHECK(attrsP, "attrs", kNodeP);
-      ARRAY_CHECK(attrsP, "attrs");
-      EMPTY_ARRAY_CHECK(attrsP, "attrs");
-      *attrsPP = attrsP;
-    }
-    else if ((kNodeP->name[0] == 'q') && (kNodeP->name[1] == 0))
-    {
-      DUPLICATE_CHECK(qP, "q", kNodeP);
-      STRING_CHECK(qP, "q");
-      EMPTY_STRING_CHECK(qP, "q");
-    }
-    else if (strcmp(kNodeP->name, "geoQ") == 0)
-    {
-      DUPLICATE_CHECK(geoqP, "geoQ", kNodeP);
-      OBJECT_CHECK(geoqP, "geoQ");
-      EMPTY_OBJECT_CHECK(geoqP, "geoQ");
-      *geoqPP = geoqP;
-    }
-    else if (strcmp(kNodeP->name, "lang") == 0)
-    {
-      DUPLICATE_CHECK(langP, "lang", kNodeP);
-      STRING_CHECK(langP, "lang");
-      EMPTY_STRING_CHECK(langP, "lang");
-      *langPP = langP->value.s;
-    }
-    else if (strcmp(kNodeP->name, "temporalQ") == 0)
-    {
-      //
-      // Temporal Queries are recognized but not allowed
-      //
-      orionldError(OrionldBadRequestData, "Not Implemented", "Temporal Query as part of POST Query", 501);
+      orionldError(OrionldBadRequestData, "Invalid JSON type", "entities array item must be a JSON object", 400);
       return false;
     }
-    else  // Not Recognized - Error
+
+    TreeNode treeNodeV[3] =
     {
-      orionldError(OrionldBadRequestData, "Invalid field for query", kNodeP->name, 400);
+      { "id",        "entities:id",        NULL, 1 << KjString,  IS_URI    },
+      { "idPattern", "entities:idPattern", NULL, 1 << KjString,  0         },
+      { "type",      "entities:type",      NULL, 1 << KjString,  MANDATORY }
+    };
+
+    entityP->name = (char*) "entities item";
+
+    if (pCheckTreeNodesExtract(entityP, treeNodeV, 3, true, NULL) == false)
       return false;
-    }
-  }
 
-  if (typeP == NULL)
-  {
-    orionldError(OrionldBadRequestData, "Mandatory field missing", "Query::type", 400);
-    return false;
-  }
+    // pCheckTreeNodesExtract guarantees we have a String in treeNodeV[2] - it's the entity type and we need to EXPAND it
+    treeNodeV[2].nodeP->value.s = orionldContextItemExpand(orionldState.contextP, treeNodeV[2].nodeP->value.s, true, NULL);
 
-  if ((entitiesP != NULL) && (pcheckEntityInfoArray(entitiesP, false, false, PostQueryEntitiesPathV) == false))
-    return false;
-  if ((attrsP != NULL) && (pcheckAttrs(attrsP) == false))
-    return false;
-  if ((qP != NULL) && ((*qTreePP = pcheckQ(qP->value.s)) == NULL))
-    return false;
-  if ((geoqP != NULL) && (pcheckGeoQ(&orionldState.kalloc, geoqP, false) == NULL))
-    return false;
+    // According to the spec, id takes precedence over idPattern, so, if both are present, idPattern is NULLed out
+    if ((treeNodeV[1].nodeP != NULL) && (treeNodeV[0].nodeP != NULL))
+      kjChildRemove(entityP, treeNodeV[1].nodeP);
+  }
 
   return true;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// pCheckAttrs -
+//
+// FIXME:  There are plenty of String Arrays ...
+//         Perhaps I should incorporate this functionality inside pCheckTreeNodesExtract ?
+//         - if (nodeP->aux && STRING_ARRAY) ...
+//
+static bool pCheckAttrs(KjNode* attrsArray)
+{
+  for (KjNode* attrP = attrsArray->value.firstChildP; attrP != NULL; attrP = attrP->next)
+  {
+    if (attrP->type != KjString)
+    {
+      orionldError(OrionldBadRequestData, "Invalid JSON Type (must be a JSON String)", "attrs array item", 400);
+      return false;
+    }
+
+    attrP->value.s = orionldAttributeExpand(orionldState.contextP, attrP->value.s, true, NULL);
+  }
+
+  return true;
+}
+
+
+
+// ----------------------------------------------------------------------------
+//
+// treeNodeSet -
+//
+void treeNodeSet(TreeNode* treeNodeP, const char* name, const char* longName, int nodeTypeBitmask, int aux)
+{
+  treeNodeP->name     = name;
+  treeNodeP->longName = longName;
+  treeNodeP->nodeP    = NULL;      // Output - points to the KjNode
+  treeNodeP->nodeType = nodeTypeBitmask;
+  treeNodeP->aux      = aux;
+  treeNodeP->output   = NULL;
+}
+
+
+
+// ----------------------------------------------------------------------------
+//
+// pCheckQuery -
+//
+TreeNode* pCheckQuery(KjNode* queryP)
+{
+  if (queryP->type != KjObject)
+  {
+    orionldError(OrionldBadRequestData, "Not a JSON Object", "POST Query Payload body", 400);
+    return NULL;
+  }
+
+  TreeNode* treeNodeV = (TreeNode*) kaAlloc(&orionldState.kalloc, 11 * sizeof(TreeNode));
+  if (treeNodeV == NULL)
+  {
+    orionldError(OrionldInternalError, "Out of memory", "allocating TreeNode array", 500);
+    return NULL;
+  }
+
+  treeNodeSet(&treeNodeV[0],  "type",      NULL, 1 << KjString,  MANDATORY);
+  treeNodeSet(&treeNodeV[1],  "entities",  NULL, 1 << KjArray,   0);
+  treeNodeSet(&treeNodeV[2],  "attrs",     NULL, 1 << KjArray,   0);
+  treeNodeSet(&treeNodeV[3],  "q",         NULL, 1 << KjString,  0);
+  treeNodeSet(&treeNodeV[4],  "geoQ",      NULL, 1 << KjObject,  0);
+  treeNodeSet(&treeNodeV[5],  "local",     NULL, 1 << KjBoolean, 0);
+  treeNodeSet(&treeNodeV[6],  "csf",       NULL, 1 << KjString,  NOT_SUPPORTED);
+  treeNodeSet(&treeNodeV[7],  "temporalQ", NULL, 1 << KjObject,  NOT_SUPPORTED);
+  treeNodeSet(&treeNodeV[8],  "scopeQ",    NULL, 1 << KjString,  NOT_IMPLEMENTED);
+  treeNodeSet(&treeNodeV[9],  "lang",      NULL, 1 << KjString,  0);
+  treeNodeSet(&treeNodeV[10], "datasetId", NULL, 1 << KjArray,  0);
+
+  //
+  // Extract first level nodes + check for unknown fields and duplicates
+  //
+  if (pCheckTreeNodesExtract(queryP, treeNodeV, 11, true, NULL) == false)
+    return NULL;
+
+  // Make sure "type": "Query" - we already know it's there and is a String
+  if (strcmp(treeNodeV[0].nodeP->value.s, "Query") != 0)
+  {
+    orionldError(OrionldBadRequestData, "Invalid request", "The type field must have the value 'Query'", 400);
+    return NULL;
+  }
+
+
+  //
+  // Go over first level complex nodes and call their respective pCheck function
+  // The simpler fields, e.g. local or lang have already been completely checked by pCheckTreeNodesExtract
+  //
+  if ((treeNodeV[1].nodeP != NULL) && (pCheckEntities(treeNodeV[1].nodeP)          == false))                         return NULL;
+  if ((treeNodeV[2].nodeP != NULL) && (pCheckAttrs(treeNodeV[2].nodeP)             == false))                         return NULL;
+  if ((treeNodeV[3].nodeP != NULL) && ((treeNodeV[3].output = pcheckQ(treeNodeV[3].nodeP->value.s))  == NULL)) return NULL;
+  if ((treeNodeV[4].nodeP != NULL) && ((treeNodeV[4].output = pcheckGeoQ(&orionldState.kalloc, treeNodeV[4].nodeP, false)) == NULL)) return NULL;
+
+  //
+  // Now, for the query to not be too wide, we need at least one of:
+  // - entities: ix==1
+  // - attrs:    ix==2
+  // - q:        ix==3
+  // - geoQ:     ix==4
+  // - local:    ix==5
+  //
+  bool tooWide = true;
+  for (int ix = 1; ix <= 5; ix++)
+  {
+    if (treeNodeV[ix].nodeP != NULL)
+    {
+      tooWide = false;
+      break;
+    }
+  }
+
+  if (tooWide == true)
+  {
+    orionldError(OrionldBadRequestData, "Invalid request", "the query is too broad (need one of entities, attrs, q, geoQ, local)", 400);
+    return NULL;
+  }
+
+  return treeNodeV;
 }

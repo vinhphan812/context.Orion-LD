@@ -3,7 +3,7 @@
 
 /*
 *
-* Copyright 2019 FIWARE Foundation e.V.
+* Copyright 2022 FIWARE Foundation e.V.
 *
 * This file is part of Orion-LD Context Broker.
 *
@@ -27,24 +27,20 @@
 */
 extern "C"
 {
-#include "kjson/KjNode.h"                                      // KjNode
+#include "kjson/KjNode.h"                                     // KjNode
 }
 
 
 
 // -----------------------------------------------------------------------------
 //
-// pcheckEntity -
+// pCheckEntity -
 //
-extern bool pcheckEntity
+extern bool pCheckEntity
 (
-  KjNode*          kNodeP,
-  KjNode**         locationNodePP,
-  KjNode**         observationSpaceNodePP,
-  KjNode**         operationSpaceNodePP,
-  KjNode**         createdAtPP,
-  KjNode**         modifiedAtPP,
-  bool             isBatchOperation
+  KjNode*  entityP,       // The entity from the incoming payload body
+  bool     batch,         // Batch operations have the Entity ID in the payload body - mandatory, Non-batch, the entity-id can't be present
+  KjNode*  dbAttrsP       // "attrs" member - all attributes - fron database
 );
 
 #endif  // SRC_LIB_ORIONLD_PAYLOADCHECK_PCHECKENTITY_H_
