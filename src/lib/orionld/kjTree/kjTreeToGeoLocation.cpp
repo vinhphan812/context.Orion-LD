@@ -33,6 +33,7 @@ extern "C"
 #include "orionld/common/orionldState.h"                         // orionldState
 #include "orionld/types/OrionldGeoLocation.h"                    // OrionldGeoLocation
 #include "orionld/payloadCheck/pcheckGeoPropertyValue.h"         // pcheckGeoPropertyValue
+#include "kjson/kjLookup.h"                                          // kjLookup
 #include "orionld/kjTree/kjTreeToGeoLocation.h"                  // Own Interface
 
 
@@ -43,22 +44,22 @@ extern "C"
 //
 bool kjTreeToGeoLocation(KjNode* geoLocationNodeP, OrionldGeoLocation* locationP)
 {
-  char*    geoType;
-  KjNode*  geoCoordsP;
-
-  if (pcheckGeoPropertyValue(geoLocationNodeP, &geoType, &geoCoordsP, geoLocationNodeP->name) == false)
+  // pCheckGeoPropertyValue validates the GeoProperty value structure only;
+  // it does NOT extract type or coordinates. The caller must do that via kjLookup.
+  // NOTE: this fixes a pre-existing call-site mismatch where kjTreeToGeoLocation.cpp
+  // called the old 4-arg signature but a6ee7b61a refactored the function to 2 args.
+  if (pCheckGeoPropertyValue(geoLocationNodeP, geoLocationNodeP->name) == false)
   {
     KT_E("pcheckGeoProperty failed");
-    // pcheckGeoProperty sets the Error Response
     orionldState.httpStatusCode = 400;
     return false;
   }
 
-  //
-  // Now the type and cooordinates of the GeoJSON is in 'orionldState.geoTypeP' and 'orionldState.geoCoordsP'
-  //
-  locationP->geoType     = geoType;
-  locationP->coordsNodeP = geoCoordsP;
+  // Extract /type and /coordinates using kjLookup (kjLookup.h provides extern "C" guard)
+  KjNode* typeNodeP       = kjLookup(geoLocationNodeP, "type");
+  KjNode* coordsNodeP     = kjLookup(geoLocationNodeP, "coordinates");
+  locationP->geoType       = (typeNodeP != NULL) ? typeNodeP->value.s : NULL;
+  locationP->coordsNodeP   = coordsNodeP;
 
   return true;
 }

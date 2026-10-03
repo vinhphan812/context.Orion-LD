@@ -226,7 +226,7 @@ bool pcheckRegistration(const char* regModeString, KjNode* registrationP, const 
       OBJECT_CHECK(nodeP, nodeP->name);
       EMPTY_OBJECT_CHECK(nodeP, nodeP->name);
 
-      if (pcheckGeoPropertyValue(locationP, NULL, NULL, nodeP->name) == false)
+      if (pCheckGeoPropertyValue(locationP, nodeP->name) == false)
       {
         orionldState.httpStatusCode = 400;
         return false;
@@ -237,7 +237,7 @@ bool pcheckRegistration(const char* regModeString, KjNode* registrationP, const 
       DUPLICATE_CHECK(observationSpaceP, nodeP->name, nodeP);
       OBJECT_CHECK(nodeP, nodeP->name);
       EMPTY_OBJECT_CHECK(nodeP, nodeP->name);
-      if (pcheckGeoPropertyValue(observationSpaceP, NULL, NULL, nodeP->name) == false)
+      if (pCheckGeoPropertyValue(observationSpaceP, nodeP->name) == false)
       {
         orionldState.httpStatusCode = 400;
         return false;
@@ -248,7 +248,7 @@ bool pcheckRegistration(const char* regModeString, KjNode* registrationP, const 
       DUPLICATE_CHECK(operationSpaceP, nodeP->name, nodeP);
       OBJECT_CHECK(nodeP, nodeP->name);
       EMPTY_OBJECT_CHECK(nodeP, nodeP->name);
-      if (pcheckGeoPropertyValue(operationSpaceP, NULL, NULL, nodeP->name) == false)
+      if (pCheckGeoPropertyValue(operationSpaceP, nodeP->name) == false)
         return false;
     }
     else if ((strcmp(nodeP->name, "expiresAt") == 0) || (strcmp(nodeP->name, "expires") == 0))

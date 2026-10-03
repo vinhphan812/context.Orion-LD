@@ -40,6 +40,7 @@ extern "C"
 #include "orionld/context/orionldCoreContext.h"                  // orionldCoreContextP
 #include "orionld/payloadCheck/pCheckUri.h"                      // pCheckUri
 #include "orionld/payloadCheck/pcheckGeoPropertyValue.h"         // pcheckGeoPropertyValue
+#include "kjson/kjLookup.h"                                          // kjLookup
 #include "orionld/payloadCheck/pcheckLanguagePropertyValue.h"    // pcheckLanguagePropertyValue
 #include "orionld/legacyDriver/kjTreeToCompoundValue.h"          // kjTreeToCompoundValue
 #include "orionld/legacyDriver/metadataAdd.h"                    // metadataAdd
@@ -499,10 +500,16 @@ bool kjTreeToContextAttribute(OrionldContext* contextP, KjNode* kNodeP, ContextA
     //
     if (isGeoProperty == true)
     {
-      if (pcheckGeoPropertyValue(valueP, &orionldState.geoType, &orionldState.geoCoordsP, attributeName) == false)
+      // NOTE: fixes pre-existing call-site mismatch (old 4-arg vs new 2-arg signature).
+      // The new function validates only; extract /type and /coordinates via kjLookup.
+      if (pCheckGeoPropertyValue(valueP, attributeName) == false)
       {
         // pcheckGeoPropertyValue fills in error response
         *detailP = (char*) "pcheckGeoProperty failed";
+        // Extract type and coords for the caller
+        KjNode* typeNodeP = kjLookup(valueP, "type");
+        orionldState.geoType    = (typeNodeP != NULL) ? typeNodeP->value.s : NULL;
+        orionldState.geoCoordsP = kjLookup(valueP, "coordinates");
         orionldState.httpStatusCode = 400;
         return false;
       }

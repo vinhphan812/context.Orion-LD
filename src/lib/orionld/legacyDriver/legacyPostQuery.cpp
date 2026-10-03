@@ -67,7 +67,7 @@ bool legacyPostQuery(void)
   char*    lang      = NULL;
 
   // pcheckQuery makes sure the Payload Data is correct and it expands all fields that should be expanded
-  if (pcheckQuery(orionldState.requestTree, &entitiesP, &attrsP, &qTree, &geoqP, &lang) == false)
+  if (pCheckQuery(orionldState.requestTree) == NULL)
     return false;
 
   int      count  = 0;
