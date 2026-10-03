@@ -1135,6 +1135,15 @@ int main(int argC, char* argV[])
     exit(1);
   }
 
+  //
+  // FIX: Re-apply -kt trace levels after paParse has run paConfigActions(false),
+  // which calls ktTraceLevelSet(paTraceV, KTRUE) and overwrites the ktrace library
+  // internal trace state with the -t flag buffer (typically empty when -t is unused).
+  // This restores kTraceLevels so the -kt flag actually enables the requested traces.
+  //
+  if (kTraceLevels[0] != 0)
+    ktTraceLevelSet(kTraceLevels, KTRUE);
+
   ktInfo = (kTraceInfo == true)? KTRUE : KFALSE;
 
   coreContextUrl = coreContextUrlSetup(coreContextVersion);

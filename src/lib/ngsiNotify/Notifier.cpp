@@ -40,6 +40,8 @@ extern "C"
 #include "ktrace/kTrace.h"
 }
 
+#include "orionld/common/traceLevels.h"
+
 #include "orionld/types/ApiVersion.h"                          // ApiVersion
 #include "orionld/types/Verb.h"                                // Verb, verbToString
 #include "orionld/common/orionldState.h"                       // orionldState, coreContextUrl

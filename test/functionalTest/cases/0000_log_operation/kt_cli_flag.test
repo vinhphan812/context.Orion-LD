@@ -1,0 +1,88 @@
+# Copyright 2026 FIWARE Foundation
+#
+# This file is part of Orion Context Broker.
+#
+# Orion Context Broker is free software: you can redistribute it and/or
+# modify it under the terms of the GNU Affero General Public License as
+# published by the Free Software Foundation, either version 3 of the
+# License, or (at your option) any later version.
+#
+# Orion Context Broker is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU Affero
+# General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with Orion Context Broker. If not, see http://www.gnu.org/licenses/.
+#
+# For those usages not covered by this license please contact with
+# iot_support at tid dot es
+
+# VALGRIND_READY - to mark the test ready for valgrindTestSuite.sh
+
+--NAME--
+CLI -kt trace level flag
+
+--SHELL-INIT--
+dbInit CB
+orionldStart CB -kt 5-10
+
+--SHELL--
+echo "=== 1. GET trace level — should reflect -kt CLI flag"
+orionCurl --url "/log/traceLevel" 2> /dev/null
+echo
+echo
+
+echo "=== 2. Create entity — triggers internal trace points"
+orionCurl --url "/ngsi-ld/v1/entities" \
+  --payload '{"id":"urn:ngsi-ld:Robot:KT-Test-001","type":"Robot"}' \
+  -H "Content-Type: application/ld+json" 2> /dev/null
+echo
+echo
+
+echo "=== 3. GET trace level after request"
+orionCurl --url "/log/traceLevel" 2> /dev/null
+echo
+echo
+
+--REGEXPECT--
+=== 1. GET trace level — should reflect -kt CLI flag
+HTTP/1.1 200 OK
+Content-Length: REGEX([0-9]+)
+Content-Type: application/json
+Date: REGEX(.*)
+Fiware-Correlator: REGEX([0-9a-f\-]{36})
+
+{
+    "tracelevels": "5-10"
+}
+
+
+=== 2. Create entity — triggers internal trace points
+HTTP/1.1 201 Created
+Content-Length: REGEX([0-9]+)
+Content-Type: application/json
+Date: REGEX(.*)
+Fiware-Correlator: REGEX([0-9a-f\-]{36})
+Location: /ngsi-ld/v1/entities/urn:ngsi-ld:Robot:KT-Test-001
+Link: REGEX(<http://.*/ngsi-ld/v1/json-schema/.*Robot.*>;rel="http://www.w3.org/ns/json-ld#context";type="application/ld\+json")
+
+{
+}
+
+
+=== 3. GET trace level after request
+HTTP/1.1 200 OK
+Content-Length: REGEX([0-9]+)
+Content-Type: application/json
+Date: REGEX(.*)
+Fiware-Correlator: REGEX([0-9a-f\-]{36})
+
+{
+    "tracelevels": "5-10"
+}
+
+
+--TEARDOWN--
+brokerStop CB
+dbDrop CB
