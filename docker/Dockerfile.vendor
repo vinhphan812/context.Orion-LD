@@ -1,0 +1,105 @@
+# Vendor Orion-LD Docker Image
+# E7-D4 Level 3 Instrumented
+# Source-controlled SASL2 compatibility shim
+#
+# Build arguments:
+#   ORION_BINARY  — path to pre-built orionld binary (default: bin/orionld)
+#   SASL_VERSION  — libsasl2 version to link against (default: 3)
+#
+# The sasl_compat.c shim provides SASL2 version-tagged symbols that the
+# mongoc driver on RHEL/UBI8 expects but are absent from the stock
+# cyrus-sasl-lib package (which ships @SASL2 tags on Debian, not RHEL).
+# The shim delegates all SASL calls to libsasl2.so.3.
+
+ARG FROM_IMAGE=registry.access.redhat.com/ubi8/ubi:8.10
+
+# ------------------------------------------------------------------
+# Stage 1: compile SASL compatibility shim
+# ------------------------------------------------------------------
+FROM ${FROM_IMAGE} AS sasl_builder
+
+ARG SASL_VERSION=3
+
+RUN dnf install -y --nodocs \
+        gcc \
+        make \
+        cyrus-sasl-devel \
+        cyrus-sasl-lib \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/tmp/dnf
+
+WORKDIR /build-sasl
+
+COPY docker/sasl_compat.c docker/sasl_compat.map .
+
+# Compile with version script — tags symbols with SASL2 version so the
+# RHEL sasl2 plugin loader (which uses dlopen) finds them correctly.
+# sasl_compat.map defines which symbols belong to the SASL2 version group.
+RUN gcc -shared -fPIC \
+        -o libsasl2_compat.so \
+        -Wl,--version-script=sasl_compat.map \
+        sasl_compat.c \
+        -l:sasl2.so.${SASL_VERSION}
+
+# ------------------------------------------------------------------
+# Stage 2: runtime image
+# ------------------------------------------------------------------
+FROM ${FROM_IMAGE}
+
+ARG ORION_BINARY=${ORION_BINARY:-bin/orionld}
+ARG VCS_REF="03517ba2c"
+ARG BUILD_DATE="2026-10-02"
+ARG SASL_VERSION=3
+
+# Install runtime OS dependencies
+RUN dnf install -y --nodocs \
+        cyrus-sasl-lib \
+        gnutls \
+        libcurl \
+        libgcrypt \
+        libuuid \
+        libxml2 \
+        openssl \
+        zlib \
+        libnsl2 \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf /var/tmp/dnf
+
+# Copy pre-built orionld binary
+COPY ${ORION_BINARY} /usr/local/bin/orionld
+RUN chmod +x /usr/local/bin/orionld
+
+# Copy FastDDS/DDS/MQTT/MHD libs — in binary RPATH via /usr/local/lib
+COPY usr-local-lib/ /usr/local/lib/
+
+# Copy runtime shared libs (custom builds — in binary RPATH via /opt/orion-deps)
+COPY lib/ /opt/orion-deps/lib/
+
+# Copy kjson library
+COPY kjson/ /opt/orion-build/kjson/
+
+# Copy and install SASL2 compatibility shim (built in stage 1)
+COPY --from=sasl_builder /build-sasl/libsasl2_compat.so /opt/orion-deps/lib/
+
+# Set runtime library path
+ENV LD_LIBRARY_PATH="/opt/orion-deps/lib:/opt/orion-build/kjson:/usr/local/lib:${LD_LIBRARY_PATH}"
+
+# OCI labels
+LABEL org.opencontainers.image.title="FIWARE Orion-LD Context Broker (E7-D4 Instrumented)"
+LABEL org.opencontainers.image.description="Orion-LD with E7-D4 diagnostic instrumentation for FIWARE ROS integration"
+LABEL org.opencontainers.image.version="e7-d4-level3-v1"
+LABEL org.opencontainers.image.source="https://github.com/vinhphan812/context.Orion-LD"
+LABEL org.opencontainers.image.revision="${VCS_REF}"
+LABEL org.opencontainers.image.created="${BUILD_DATE}"
+LABEL fiware.orionld.instrumentation="e7-d4-level3-instrumentation"
+LABEL fiware.orionld.vendor-build="true"
+LABEL fiware.orionld.fork="vinhphan812/context.Orion-LD"
+LABEL fiware.orionld.sasl-shim="sasl_compat.c"
+
+ENV ORION_LD_PORT=1026
+ENV ORION_LD_LOG_LEVEL=INFO
+
+EXPOSE ${ORION_LD_PORT}
+
+ENTRYPOINT ["/usr/local/bin/orionld"]
+CMD ["-port", "${ORION_LD_PORT}", "-logLevel", "INFO"]

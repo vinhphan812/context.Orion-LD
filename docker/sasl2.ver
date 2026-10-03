@@ -1,0 +1,14 @@
+SASL2 {
+  global:
+    sasl_errdetail;
+    sasl_dispose;
+    sasl_client_step;
+    sasl_client_start;
+    sasl_client_init;
+    sasl_client_done;
+    sasl_set_mutex;
+    sasl_client_new;
+    sasl_global_listmech;
+    sasl_errstring;
+  local: *;
+};
