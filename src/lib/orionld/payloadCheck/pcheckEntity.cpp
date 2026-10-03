@@ -1,6 +1,6 @@
 /*
 *
-* Copyright 2019 FIWARE Foundation e.V.
+* Copyright 2022 FIWARE Foundation e.V.
 *
 * This file is part of Orion-LD Context Broker.
 *
@@ -20,50 +20,71 @@
 * For those usages not covered by this license please contact with
 * orionld at fiware dot org
 *
-* Author: Ken Zangelin, Gabriel Quaresma
+* Author: Ken Zangelin
 */
+#include <string.h>                                              // strcmp
+
 extern "C"
 {
+#include "kalloc/kaStrdup.h"                                     // kaStrdup
 #include "kjson/KjNode.h"                                        // KjNode
+#include "kjson/kjLookup.h"                                      // kjLookup
 #include "kjson/kjBuilder.h"                                     // kjString, kjObject, ...
 }
 
 #include "orionld/common/orionldState.h"                         // orionldState
 #include "orionld/common/orionldError.h"                         // orionldError
-#include "orionld/common/SCOMPARE.h"                             // SCOMPAREx
-#include "orionld/common/CHECK.h"                                // CHECK
-#include "orionld/service/orionldServiceInit.h"                  // orionldHostName, orionldHostNameLen
-#include "orionld/context/orionldCoreContext.h"                  // orionldDefaultUrl, orionldCoreContext
-#include "orionld/payloadCheck/pcheckName.h"                     // pcheckName
-#include "orionld/payloadCheck/pcheckEntity.h"                   // Own interface
+#include "orionld/common/dotForEq.h"                             // dorForEq
+#include "orionld/types/OrionldAttributeType.h"                  // OrionldAttributeType, orionldAttributeType
+#include "orionld/context/orionldContextItemExpand.h"            // orionldContextItemExpand
+#include "orionld/context/orionldAttributeExpand.h"              // orionldAttributeExpand
+#include "orionld/kjTree/kjTreeLog.h"                            // kjTreeLog
+#include "orionld/payloadCheck/PCHECK.h"                         // PCHECK_*
+#include "orionld/payloadCheck/pcheckName.h"                     // pCheckName
+#include "orionld/payloadCheck/pCheckUri.h"                      // pCheckUri
+#include "orionld/payloadCheck/pCheckAttribute.h"                // pCheckAttribute
+#include "orionld/payloadCheck/pCheckEntity.h"                   // Own interface
 
 
 
 // -----------------------------------------------------------------------------
 //
-// checkEntityIdFieldExistis -
+// kjLookupByNameExceptOne -
 //
-static bool checkEntityIdFieldExists(void)
+KjNode* kjLookupByNameExceptOne(KjNode* containerP, const char* fieldName, KjNode* exceptP)
 {
-  if (orionldState.payloadIdNode == NULL)
+  if (containerP->type != KjObject)
+    return NULL;  // BUG ?
+
+  for (KjNode* fieldP = containerP->value.firstChildP; fieldP != NULL; fieldP = fieldP->next)
   {
-    orionldError(OrionldBadRequestData, "Entity id is missing", "The 'id' field is mandatory", 400);
+    if (fieldP == exceptP)
+      continue;
+
+    if (strcmp(fieldP->name, fieldName) == 0)
+      return fieldP;
+  }
+
+  return NULL;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// idCheck -
+//
+static bool idCheck(KjNode* attrP, KjNode* idP)
+{
+  if (idP != NULL)
+  {
+    // We know that there must have been an "id" and an "@id", as duplicated fields are detected already by kjLookupByNameExceptOne
+    orionldError(OrionldBadRequestData, "Duplicated field in an entity (id+@id)", idP->value.s, 400);
     return false;
   }
 
-  if (orionldState.payloadTypeNode == NULL)
-  {
-    const char* entityStartTitle       = "Entity - ";
-    const char* idEntityFromPayload    = orionldState.payloadIdNode->value.s;
-    char*       titleExpanded;
-
-    titleExpanded = kaAlloc(&orionldState.kalloc, (1 + strlen(entityStartTitle) + strlen(idEntityFromPayload)));
-    strcpy(titleExpanded, entityStartTitle);
-    strcat(titleExpanded, idEntityFromPayload);
-
-    orionldError(OrionldBadRequestData, titleExpanded, "The 'type' field is mandatory", 400);
-    return false;
-  }
+  PCHECK_STRING(attrP,             0, NULL, "The Entity ID must be a string that is a valid URI", 400);
+  PCHECK_URI(attrP->value.s, true, 0, NULL, "The Entity ID must be a valid URI",                  400);
 
   return true;
 }
@@ -72,113 +93,161 @@ static bool checkEntityIdFieldExists(void)
 
 // -----------------------------------------------------------------------------
 //
-// pcheckEntity -
+// typeCheck -
 //
-bool pcheckEntity
+static bool typeCheck(KjNode* attrP, KjNode* typeP, KjNode* idP)
+{
+  if (typeP != NULL)
+  {
+    // We know that there must have been a "type" and an "@type", as duplicated fields are detected already by kjLookupByNameExceptOne
+    if (idP != NULL)
+      orionldError(OrionldBadRequestData, "Duplicated field in an entity (type+@type)", idP->value.s, 400);
+    else
+      orionldError(OrionldBadRequestData, "Duplicated field in an entity", "type+@type", 400);
+    return false;
+  }
+
+  PCHECK_STRING(attrP,              0, "The Entity Type must be a JSON String", kjValueType(attrP->type), 400);
+  PCHECK_URI(attrP->value.s, false, 0, "Invalid URI",                           "Invalid Entity Type",    400);
+
+  return true;
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// attrTypeFromDb -
+//
+// Look up the attribute in dbAttrsP, extract the attribute type and pass it to pCheckAttribute
+//
+static OrionldAttributeType attrTypeFromDb(KjNode* dbAttrsP, char* attrName)
+{
+  KjNode* attrP = kjLookup(dbAttrsP, attrName);
+
+  if (attrP == NULL)
+    return NoAttributeType;
+
+  KjNode* typeP = kjLookup(attrP, "type");
+  if (typeP == NULL)
+    return NoAttributeType;  // Really a DB Error but ... best effort?
+
+  return orionldAttributeType(typeP->value.s);
+}
+
+
+
+// -----------------------------------------------------------------------------
+//
+// pCheckEntity -
+//
+// When an entity is created (dbEntityP == NULL), the "type" and "id" are Mandatory:
+//   - POST /entities
+//   - POST /entityOperations/create
+//   - POST /entityOperations/upsert   (possibly)
+//
+// When an entity is updated:
+//   - For the Entity ID:
+//     - POST /entities/{entityId}/attrs:    "id" can't be present - it's already in the URL PATH
+//     - PATCH /entities/{entityId}/attrs:   "id" can't be present - it's already in the URL PATH
+//     - BATCH Upsert/Update:                "id" must be present - can't find the entity otherwise ...
+//
+//   - For the Entity TYPE:
+//     POST /entities/{entityId}/attrs:      if "type" is present, it needs to coincide with what's in the DB
+//
+bool pCheckEntity
 (
-  KjNode*   kNodeP,
-  KjNode**  locationNodePP,
-  KjNode**  observationSpaceNodePP,
-  KjNode**  operationSpaceNodePP,
-  KjNode**  createdAtPP,
-  KjNode**  modifiedAtPP,
-  bool      isBatchOperation
+  KjNode*  entityP,       // The entity from the incoming payload body
+  bool     batch,         // Batch operations have the Entity ID in the payload body - mandatory, Non-batch, the entity-id can't be present
+  KjNode*  dbAttrsP       // "attrs" member - all attributes - from database
 )
 {
-  if (isBatchOperation == false)
+  // Remove builtin timestamps, if present
+  KjNode* nodeP;
+
+  if ((nodeP = kjLookup(entityP, "createdAt"))  != NULL)  kjChildRemove(entityP, nodeP);
+  if ((nodeP = kjLookup(entityP, "modifiedAt")) != NULL)  kjChildRemove(entityP, nodeP);
+
+  // Loop over attributes
+  KjNode* idP      = NULL;
+  KjNode* typeP    = NULL;
+  char*   entityId = (char*)  "urn:unknown:id";
+
+  for (KjNode* attrP = entityP->value.firstChildP; attrP != NULL; attrP = attrP->next)
   {
-    OBJECT_CHECK(orionldState.requestTree, "toplevel");
+    if (kjLookupByNameExceptOne(entityP, attrP->name, attrP) != NULL)
+    {
+      orionldError(OrionldBadRequestData, "Duplicated field in an entity", attrP->name, 400);
+      return false;
+    }
 
     //
-    // Check presence of mandatory fields "id" and "type"
+    // id
     //
-    if (checkEntityIdFieldExists() == false)
+    if ((strcmp(attrP->name, "id") == 0) || (strcmp(attrP->name, "@id") == 0))
+    {
+      if (idCheck(attrP, idP) == false)  // POST /entities/*/attrs   CANNOT add/modify "id"
+        return false;
+
+      idP = attrP;
+      entityId = idP->value.s;
+      continue;
+    }
+
+    //
+    // type
+    //
+    if ((strcmp(attrP->name, "type")  == 0) || (strcmp(attrP->name, "@type") == 0))
+    {
+      if (typeCheck(attrP, typeP, idP) == false)
+        return false;
+
+      typeP          = attrP;
+      typeP->value.s = orionldContextItemExpand(orionldState.contextP, typeP->value.s, true, NULL);
+      continue;
+    }
+
+    //
+    // Special attributes
+    //
+    if (strcmp(attrP->name, "@context") == 0)      continue;
+    if (strcmp(attrP->name, "scope")    == 0)      continue;
+
+
+    OrionldAttributeType  aTypeFromDb  = NoAttributeType;
+    OrionldContextItem*   contextItemP = NULL;
+
+    //
+    // Before expanding we must check the validity of the attribute name
+    //
+    if (pCheckName(attrP->name) == false)
+      return false;
+    if (pCheckUri(attrP->name, attrP->name, false) == false)  // FIXME: Both pCheckName and pCheckUri check for forbidden chars ...
+      return false;
+    attrP->name = orionldAttributeExpand(orionldState.contextP, attrP->name, true, &contextItemP);
+
+    if (dbAttrsP != NULL)
+    {
+      char* attrName = kaStrdup(&orionldState.kalloc, attrP->name);
+      dotForEq(attrName);
+      aTypeFromDb = attrTypeFromDb(dbAttrsP, attrName);
+    }
+
+    if (pCheckAttribute(entityId, attrP, true, aTypeFromDb, true, contextItemP) == false)
       return false;
   }
 
-  char*    detailsP;
-  KjNode*  locationNodeP          = NULL;
-  KjNode*  observationSpaceNodeP  = NULL;
-  KjNode*  operationSpaceNodeP    = NULL;
-  KjNode*  createdAtP             = NULL;
-  KjNode*  modifiedAtP            = NULL;
-  KjNode*  batchIdP               = NULL;
-  KjNode*  batchTypeP             = NULL;
-
   //
-  // Check for duplicated items and that data types are correct
+  // Remove the possible '@' for Entity "id" and "type"
   //
-  while (kNodeP != NULL)
-  {
-    if (isBatchOperation == true)
-    {
-      if (strcmp(kNodeP->name, "id") == 0 || strcmp(kNodeP->name, "@id") == 0)
-      {
-        DUPLICATE_CHECK(batchIdP, "id", kNodeP);
-        STRING_CHECK(batchIdP, "id");
-        URI_CHECK(batchIdP->value.s, "id", true);
-        orionldState.payloadIdNode = kNodeP;  // FIXME: Is this necessary?
-      }
-      else if (strcmp(kNodeP->name, "type") == 0 || strcmp(kNodeP->name, "@type") == 0)
-      {
-        DUPLICATE_CHECK(batchTypeP, "type", kNodeP);
-        STRING_CHECK(batchTypeP, "type");
-        URI_CHECK(batchTypeP->value.s, "type", false);
-        orionldState.payloadTypeNode = kNodeP;  // FIXME: Is this necessary?
-      }
-    }
+  if (idP   != NULL) idP->name   = (char*) "id";
+  if (typeP != NULL) typeP->name = (char*) "type";
 
-    if (SCOMPARE9(kNodeP->name, 'l', 'o', 'c', 'a', 't', 'i', 'o', 'n', 0))
-    {
-      DUPLICATE_CHECK(locationNodeP, "location", kNodeP);
-      // FIXME: check validity of location - GeoProperty - Issue #256
-    }
-    else if (SCOMPARE17(kNodeP->name, 'o', 'b', 's', 'e', 'r', 'v', 'a', 't', 'i', 'o', 'n', 'S', 'p', 'a', 'c', 'e', 0))
-    {
-      DUPLICATE_CHECK(observationSpaceNodeP, "observationSpace", kNodeP);
-      // FIXME: check validity of observationSpace - GeoProperty
-    }
-    else if (SCOMPARE15(kNodeP->name, 'o', 'p', 'e', 'r', 'a', 't', 'i', 'o', 'n', 'S', 'p', 'a', 'c', 'e', 0))
-    {
-      DUPLICATE_CHECK(operationSpaceNodeP, "operationSpace", kNodeP);
-      // FIXME: check validity of operationSpaceP - GeoProperty
-    }
-    else if (SCOMPARE10(kNodeP->name, 'c', 'r', 'e', 'a', 't', 'e', 'd', 'A', 't', 0))
-    {
-      DUPLICATE_CHECK(createdAtP, "createdAt", kNodeP);
-      STRING_CHECK(kNodeP, "createdAt");
-    }
-    else if (SCOMPARE11(kNodeP->name, 'm', 'o', 'd', 'i', 'f', 'i', 'e', 'd', 'A', 't', 0))
-    {
-      DUPLICATE_CHECK(modifiedAtP, "modifiedAt", kNodeP);
-      STRING_CHECK(kNodeP, "modifiedAt");
-    }
-    else  // Property/Relationshiop - must check chars in the name of the attribute
-    {
-      if (strcmp(kNodeP->name, "@context") != 0)
-      {
-        if (pcheckName(kNodeP->name, &detailsP) == false)
-        {
-          orionldError(OrionldBadRequestData, "Invalid Property/Relationship name", kNodeP->name, 400);
-          return false;
-        }
-      }
-    }
-    kNodeP = kNodeP->next;
-  }
+  // If batch or POST /entities - idP cannot be NULL
+  // - All other operations, it must be NULL (can't be present)
 
-  if ((isBatchOperation == true) && (checkEntityIdFieldExists() == false))
-    return false;
-
-
-  //
-  // Prepare output
-  //
-  if (locationNodePP         != NULL)  *locationNodePP         = locationNodeP;
-  if (observationSpaceNodePP != NULL)  *observationSpaceNodePP = observationSpaceNodeP;
-  if (operationSpaceNodePP   != NULL)  *operationSpaceNodePP   = operationSpaceNodeP;
-  if (createdAtPP            != NULL)  *createdAtPP            = createdAtP;
-  if (modifiedAtPP           != NULL)  *modifiedAtPP           = modifiedAtP;
+  // If batch create or POST /entities - typeP cannot be NULL  (also true if batch upert that is a create)
+  // If not creation, type cannot be present (until multi-type is implemented)
 
   return true;
 }
