@@ -3079,6 +3079,10 @@ static bool processContextAttributeVector
     return false;
   }
 
+  // I3L: legacy subscription match evaluated — fires for both POST (via mongoUpdateContext) and PATCH (via legacyPatchEntity)
+  KT_T(KtE7D4I3L, "E7-D4 I3L: entityId='%s' entityType='%s' matchedSubs=%lu",
+       entityId.c_str(), entityType.c_str(), (unsigned long)subsToNotify.size());
+
 
   /* If the status code was not touched (filled with an error), then set it with Ok */
   if (cerP->statusCode.code == SccNone)
@@ -3784,6 +3788,9 @@ static void updateEntity
 
   /* Send notifications for each one of the ONCHANGE subscriptions accumulated by
    * previous addTriggeredSubscriptions() invocations */
+  // I4L: legacy notification payload built — fires for both POST and PATCH (shared mongoUpdateContext path)
+  KT_T(KtE7D4I4L, "E7-D4 I4L: entityId='%s' notifications=%lu",
+       notifyCerP->contextElement.entityId.id.c_str(), (unsigned long)subsToNotify.size());
   processSubscriptions(subsToNotify, notifyCerP, &err, tenantP, xauthToken, fiwareCorrelator);
   notifyCerP->release();
   delete notifyCerP;

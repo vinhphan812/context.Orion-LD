@@ -136,6 +136,14 @@ typedef enum OrionldTraceLevels
   // Alterations
   KtAlt                     = 1000,
 
+  // E7-D4 Legacy (non-experimental) notification instrumentation
+  KtE7D4I1L                 = 1056,   // I1L: legacy mongoUpdateContext accepted (PATCH handler entry)
+  KtE7D4I2L                 = 1057,   // I2L: legacy attribute update processed (PATCH attrs loop complete)
+  KtE7D4I3L                 = 1058,   // I3L: legacy subscription match evaluated (addTriggeredSubscriptions)
+  KtE7D4I4L                 = 1059,   // I4L: legacy notification payload built (before processSubscriptions)
+  KtE7D4I5L                 = 1060,   // I5L: legacy notification dispatched (Notifier::sendNotifyContextRequest)
+  KtE7D4I6L                 = 1061,   // I6L: legacy notification HTTP response (senderThread outcome)
+
   // Notifications
   KtNotification            = 1100,
   KtNotificationStats       = 1101,

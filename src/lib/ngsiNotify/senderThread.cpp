@@ -129,6 +129,9 @@ void* startSenderThread(void* p)
 
       if (r == 0)
       {
+        // I6L: legacy notification HTTP response — success path
+        KT_T(KtE7D4I6L, "E7-D4 I6L: sub='%s' OUTCOME=OK status=200 url='%s'",
+             params->subscriptionId.c_str(), url.c_str());
         statisticsUpdate(NotifyContextSent, params->mimeType);
         alarmMgr.notificationErrorReset(url);
 
@@ -137,6 +140,9 @@ void* startSenderThread(void* p)
       }
       else
       {
+        // I6L: legacy notification HTTP response — failure path
+        KT_T(KtE7D4I6L, "E7-D4 I6L: sub='%s' OUTCOME=FAIL status=%d url='%s'",
+             params->subscriptionId.c_str(), r, url.c_str());
         if (params->registration == false)
           subCacheItemStatsUpdate(params->tenantP, params->subscriptionId.c_str(), ngsildSubscription, true);
       }

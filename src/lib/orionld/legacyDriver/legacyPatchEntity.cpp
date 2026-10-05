@@ -54,6 +54,7 @@ extern "C"
 #include "orionld/legacyDriver/kjTreeToContextAttribute.h"       // kjTreeToContextAttribute
 #include "orionld/mongoCppLegacy/mongoCppLegacyEntityLookup.h"   // mongoCppLegacyEntityLookup
 #include "orionld/legacyDriver/legacyPatchEntity.h"              // Own Interface
+#include "orionld/common/traceLevels.h"                          // KtE7D4I1L, KtE7D4I2L
 
 
 
@@ -225,6 +226,9 @@ bool legacyPatchEntity(void)
     newAttrP = next;
   }
 
+  // I2L: legacy attribute update processed (PATCH only — POST uses legacyPostEntities, not this handler)
+  KT_T(KtE7D4I2L, "E7-D4 I2L: entityId='%s' attrsUpdated=%d", entityId, newAttrs);
+
   if (newAttrs > 0)
   {
     // 6. Convert the resulting tree (dbEntityP) to a ContextElement
@@ -265,6 +269,9 @@ bool legacyPatchEntity(void)
                                                      orionldState.attrsFormat,
                                                      orionldState.apiVersion,
                                                      NGSIV2_NO_FLAVOUR);
+
+    // I1L: legacy entity update accepted by mongoUpdateContext
+    KT_T(KtE7D4I1L, "E7-D4 I1L: entityId='%s' status=%d", entityId, orionldState.httpStatusCode);
 
     ucRequest.release();
   }

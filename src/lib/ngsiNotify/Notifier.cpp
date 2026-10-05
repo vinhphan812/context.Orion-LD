@@ -117,6 +117,13 @@ void Notifier::sendNotifyContextRequest
 
   if (!paramsV->empty()) // al least one param, an empty vector means an error occurred
   {
+    // I5L: legacy notification dispatched — fires for both POST and PATCH (Notifier::sendNotifyContextRequest)
+    for (unsigned ix = 0; ix < paramsV->size(); ++ix)
+    {
+      SenderThreadParams* p = (*paramsV)[ix];
+      KT_T(KtE7D4I5L, "E7-D4 I5L: sub='%s' ip='%s' port=%d protocol=%s PENDING_RESPONSE",
+           p->subscriptionId.c_str(), p->ip.c_str(), p->port, p->protocol.c_str());
+    }
     int ret = pthread_create(&tid, NULL, startSenderThread, paramsV);
 
     if (ret != 0)
